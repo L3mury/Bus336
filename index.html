@@ -165,7 +165,7 @@
         <div><label for="walk">Cesta na zastávku (min)</label><input id="walk" type="number" inputmode="numeric" min="0" max="60"></div>
       </div>
       <div class="fields" id="homeFields">
-        <div><label for="zwalk">Na stanoviště dojdu za (min)</label><input id="zwalk" type="number" inputmode="numeric" min="0" max="60"></div>
+        <div><label for="zwalk">Z práce na Zličín (min)</label><input id="zwalk" type="number" inputmode="numeric" min="0" max="60"></div>
         <div><label for="homeWalk">Z V Roklích domů (min)</label><input id="homeWalk" type="number" inputmode="numeric" min="0" max="60"></div>
       </div>
       <div class="plan" id="plan"></div>
@@ -233,7 +233,7 @@ const state = {
   dir: store.get("dir") === "out" ? "out" : "back",
   leave: /^\d\d:\d\d$/.test(store.get("leave") || "") ? store.get("leave") : "07:36",
   walk: minutesSetting("walk", 7),
-  zwalk: minutesSetting("zwalk", 3),
+  zwalk: minutesSetting("zwalk", 12),
   demo: false, items: [], infos: [], arrivals: new Map(),
   updated: 0, loaded: false, error: "", resolved: {}
 };
