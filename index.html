@@ -203,7 +203,7 @@
 "use strict";
 const API = "https://api.golemio.cz/v2/pid/departureboards";
 const LINES = new Set(["336", "347", "358"]);
-const REFRESH_MS = 30000, BACKOFF_MS = 90000, PAGE = 100, MAX_PAGES = 4, WINDOW_MIN = 180;
+const REFRESH_MS = 30000, BACKOFF_MS = 90000, PAGE = 100, MAX_PAGES = 5, WINDOW_MIN = 180, DELAY_MIN = 45;
 
 // Pořadí od Zličína. Více názvů = varianty zápisu, které se postupně vyzkouší.
 const STOPS = [
@@ -287,7 +287,9 @@ class HttpError extends Error { constructor(status) { super("HTTP " + status); t
 
 async function getPage(name, offset, minutes, from) {
   const q = new URLSearchParams({ minutesAfter: minutes, limit: PAGE, offset, mode: "departures", order: "real" });
-  if (from) { q.set("timeFrom", from); q.set("minutesBefore", 0); }
+  // Okno se řídí plánovaným časem, proto sahá i do minulosti: jinak by zmizely opožděné spoje.
+  q.set("minutesBefore", from ? 0 : DELAY_MIN);
+  if (from) q.set("timeFrom", from);
   const res = await fetch(`${API}?names[]=${encodeURIComponent(name)}&${q}`, {
     headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
   });
@@ -311,7 +313,7 @@ async function loadName(name, index, minutes, from) {
     items.push(...deps.filter(d => wanted(d, index)));
     infos.push(...(data.infotexts || []));
     if (!page) stops.push(...(data.stops || []));
-    if (deps.length < PAGE || (!from && items.length >= 10)) break;
+    if (deps.length < PAGE || (!from && items.filter(d => upcoming(d, Date.now())).length >= 10)) break;
   }
   return { items, infos, stops };
 }
@@ -442,7 +444,7 @@ async function getPosition(id) {
 
 function mapBuses(now) {
   const dir = activeDir(), mine = chosenBus(now);
-  const list = running(dir).filter(d => d.trip?.id && whenOf(d) > now - 45000).slice(0, MAP_BUSES);
+  const list = running(dir).filter(d => d.trip?.id && upcoming(d, now)).slice(0, MAP_BUSES);
   if (mine?.trip?.id && !list.includes(mine)) list[Math.min(list.length, MAP_BUSES - 1)] = mine;
   return list;
 }
@@ -519,6 +521,7 @@ const dirOf = d => /zli[cč][ií]n/i.test(d.trip?.headsign || "") ? "back" : "ou
 const whenOf = d => new Date(d.departure_timestamp?.predicted || d.departure_timestamp?.scheduled).getTime();
 const schedOf = d => new Date(d.departure_timestamp?.scheduled || d.departure_timestamp?.predicted).getTime();
 const arrivalOf = d => new Date(d.arrival_timestamp?.predicted || d.arrival_timestamp?.scheduled || d.departure_timestamp?.predicted || d.departure_timestamp?.scheduled).getTime();
+const upcoming = (d, now) => whenOf(d) > now - 45000 || !!d.trip?.is_at_stop;
 const niceStop = s => String(s || "").replace(/,(?=\S)/g, ", ");
 const tag = d => `<span class="tag">${esc(d.route?.short_name)}</span>`;
 const platform = d => state.mode === "home" && d.stop?.platform_code ? ` · stanoviště ${esc(d.stop.platform_code)}` : "";
@@ -543,7 +546,7 @@ function timeHtml(d) {
 }
 const running = dir => state.items.filter(d => dirOf(d) === dir && !d.trip?.is_canceled).sort((a, b) => whenOf(a) - whenOf(b));
 
-function pickWork(now, arrive) { return running("back").find(d => whenOf(d) >= arrive && whenOf(d) > now - 45000); }
+function pickWork(now, arrive) { return running("back").find(d => whenOf(d) >= arrive && upcoming(d, now)); }
 function pickHome(now) {
   const options = running("out").filter(d => whenOf(d) >= now + state.zwalk * 60000);
   return options.find(d => state.arrivals.has(d.trip?.id)) || options[0];
@@ -605,7 +608,7 @@ function render() {
   $("demoBar").hidden = $("exitDemo").hidden = !state.demo;
   if (mode !== "other") $("plan").innerHTML = state.loaded ? (mode === "work" ? planWork(now) : planHome(now)) : `<div class="hint">Načítám…</div>`;
 
-  const list = state.items.filter(d => dirOf(d) === dir && whenOf(d) > now - 45000).sort((a, b) => whenOf(a) - whenOf(b));
+  const list = state.items.filter(d => dirOf(d) === dir && upcoming(d, now)).sort((a, b) => whenOf(a) - whenOf(b));
   const next = list.find(d => !d.trip?.is_canceled);
   let html = state.error ? `<div class="note err">${esc(state.error)}</div>` : "";
   if (!state.loaded) {
