@@ -65,7 +65,7 @@
   h2 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 8px 0 2px; }
   ul { list-style: none; margin: 0; padding: 0; }
   li {
-    display: grid; grid-template-columns: 62px 1fr auto; gap: 10px; align-items: baseline;
+    display: grid; grid-template-columns: 74px 1fr auto; gap: 10px; align-items: baseline;
     padding: 12px 4px; border-top: 1px solid var(--line);
   }
   .mins { font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
@@ -112,7 +112,10 @@
   .big .tag { font-size: 16px; padding: 3px 8px; }
   .arr { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
   .plan b { color: var(--amber); }
-  .fields label { min-height: 36px; }
+  .mins.was { color: var(--muted); }
+  #past { margin-top: 12px; }
+  #past .hint { color: var(--muted); font-size: 14px; padding: 4px; }
+  .fields > div { display: flex; flex-direction: column; justify-content: flex-end; }
   [hidden] { display: none !important; }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 </style>
@@ -171,6 +174,8 @@
       <div class="plan" id="plan"></div>
     </section>
     <div id="board" aria-live="off"></div>
+    <button class="ghost" id="pastBtn" aria-controls="past"></button>
+    <div id="past" hidden></div>
     <div id="infos"></div>
     <footer><span id="updated" role="status"></span><button class="link" id="exitDemo" hidden>Ukončit ukázku</button></footer>
   </section>
@@ -235,6 +240,7 @@ const state = {
   walk: minutesSetting("walk", 7),
   zwalk: minutesSetting("zwalk", 12),
   demo: false, items: [], infos: [], arrivals: new Map(),
+  showPast: false, past: [], pastState: "idle",
   updated: 0, loaded: false, error: "", resolved: {}
 };
 let timer = 0, requestId = 0;
@@ -256,8 +262,9 @@ function windowMinutes() {
 /* ---------- data ---------- */
 class HttpError extends Error { constructor(status) { super("HTTP " + status); this.status = status; } }
 
-async function getPage(name, offset, minutes) {
+async function getPage(name, offset, minutes, from) {
   const q = new URLSearchParams({ minutesAfter: minutes, limit: PAGE, offset, mode: "departures", order: "real" });
+  if (from) { q.set("timeFrom", from); q.set("minutesBefore", 0); }
   const res = await fetch(`${API}?names[]=${encodeURIComponent(name)}&${q}`, {
     headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
   });
@@ -273,24 +280,24 @@ function wanted(d, index) {
 }
 
 // Velké uzly (Zličín) mají přes 100 odjezdů, proto se případně čte další stránka.
-async function loadName(name, index, minutes) {
+async function loadName(name, index, minutes, from) {
   const items = [], infos = [];
   for (let page = 0; page < MAX_PAGES; page++) {
-    const data = await getPage(name, page * PAGE, minutes);
+    const data = await getPage(name, page * PAGE, minutes, from);
     const deps = data.departures || [];
     items.push(...deps.filter(d => wanted(d, index)));
     infos.push(...(data.infotexts || []));
-    if (deps.length < PAGE || items.length >= 10) break;
+    if (deps.length < PAGE || (!from && items.length >= 10)) break;
   }
   return { items, infos };
 }
 
-async function loadStop(index, minutes) {
+async function loadStop(index, minutes, from) {
   const names = state.resolved[index] ? [state.resolved[index]] : STOPS[index].names;
   let lastError;
   for (const name of names) {
     try {
-      const out = await loadName(name, index, minutes);
+      const out = await loadName(name, index, minutes, from);
       state.resolved[index] = name;
       return out;
     } catch (e) {
@@ -301,7 +308,7 @@ async function loadStop(index, minutes) {
   throw lastError;
 }
 
-function demoData(index) {
+function demoData(index, past) {
   const now = Date.now(), make = (line, min, delay, head, id, extra = {}) => {
     const sched = new Date(now + (min - delay) * 60000).toISOString(), real = new Date(now + min * 60000).toISOString();
     return {
@@ -312,6 +319,9 @@ function demoData(index) {
       delay: { is_available: !extra.noLive, minutes: delay }
     };
   };
+  if (past) return { infos: [], items: index === ZLICIN
+    ? [make("336", -7, 1, "Jeneč,Lidická", "p1"), make("347", -21, 0, "Chýně,nádraží", "p2"), make("358", -38, 0, "Rudná,Hořelice", "p3")]
+    : [make("336", -6, 0, "Zličín", "p4"), make("347", -18, 2, "Zličín", "p5"), make("336", -26, 0, "Zličín", "p6", { is_canceled: true }), make("336", -11, 0, "Jeneč,Lidická", "p7")] };
   const items = index === ZLICIN
     ? [make("358", 2, 0, "Rudná,Hořelice", "a"), make("336", 6, 2, "Jeneč,Lidická", "b"), make("347", 19, 0, "Chýně,nádraží", "c"), make("336", 26, 0, "Hostivice,Ve Vilkách", "d")]
     : index === ROKLICE && state.mode === "home"
@@ -322,6 +332,9 @@ function demoData(index) {
 }
 
 const load = (index, minutes) => state.demo ? demoData(index) : loadStop(index, minutes);
+const PAST_MIN = 60;
+const loadPast = index => state.demo ? demoData(index, true)
+  : loadStop(index, PAST_MIN, new Date(Date.now() - PAST_MIN * 60000).toISOString());
 
 async function refresh() {
   clearTimeout(timer);
@@ -337,8 +350,14 @@ async function refresh() {
         arrivals = new Map(there.items.filter(d => d.trip?.id && dirOf(d) === "out").map(d => [d.trip.id, arrivalOf(d)]));
       } catch (e) { if (e.status === 401 || e.status === 403) throw e; }
     }
+    // Předchozí spoje se načítají jen na vyžádání a jejich chyba nesmí shodit hlavní tabuli.
+    let past = state.past, pastState = state.pastState;
+    if (state.showPast) {
+      try { past = (await loadPast(index)).items; pastState = "ok"; }
+      catch (e) { if (e.status === 401 || e.status === 403) throw e; pastState = "error"; }
+    }
     if (id !== requestId) return;
-    Object.assign(state, { items, infos, arrivals, updated: Date.now(), loaded: true, error: "" });
+    Object.assign(state, { items, infos, arrivals, past, pastState, updated: Date.now(), loaded: true, error: "" });
   } catch (e) {
     if (id !== requestId) return;
     const s = e.status;
@@ -460,12 +479,36 @@ function render() {
     }).join("") + `</ul>`;
   }
   $("board").innerHTML = html;
+  renderPast(now, dir);
 
   const seen = new Set();
   $("infos").innerHTML = state.infos.map(i => i?.text)
     .filter(t => t && /\b(336|347|358)\b/.test(t) && !seen.has(t) && seen.add(t))
     .map(t => `<div class="note">${esc(t)}</div>`).join("");
   tickFooter();
+}
+
+function renderPast(now, dir) {
+  $("pastBtn").setAttribute("aria-expanded", state.showPast);
+  $("pastBtn").textContent = state.showPast ? "Skrýt předchozí spoje" : "Zobrazit předchozí spoje";
+  $("past").hidden = !state.showPast;
+  if (!state.showPast) return;
+  if (state.pastState === "idle") { $("past").innerHTML = `<div class="hint">Načítám…</div>`; return; }
+  const seen = new Set();
+  const list = [...state.past, ...state.items]
+    .filter(d => dirOf(d) === dir && whenOf(d) <= now - 45000 && whenOf(d) >= now - PAST_MIN * 60000)
+    .sort((a, b) => whenOf(b) - whenOf(a))
+    .filter(d => { const k = d.trip?.id + "|" + schedOf(d); return !seen.has(k) && seen.add(k); })
+    .slice(0, 6);
+  if (!list.length) {
+    $("past").innerHTML = `<div class="hint">${state.pastState === "error" ? "Předchozí spoje se nepodařilo načíst." : "Za poslední hodinu tu v datech tímto směrem žádný spoj není."}</div>`;
+    return;
+  }
+  $("past").innerHTML = `<h2>Za poslední hodinu</h2><ul>` + list.map(d => {
+    const [cls, raw] = statusOf(d), txt = raw === "Jede včas" ? "Včas" : raw === "Spoj nejede" ? "Nejel" : raw;
+    return `<li><span class="mins was">−${Math.max(1, Math.round((now - whenOf(d)) / 60000))} min</span>
+      <span class="time">${tag(d)} ${timeHtml(d)}</span><span class="status ${cls}">${esc(txt)}</span></li>`;
+  }).join("") + `</ul>`;
 }
 
 function tickFooter() {
@@ -491,7 +534,7 @@ function showApp() {
   resetBoard();
 }
 function resetBoard() {
-  Object.assign(state, { items: [], infos: [], arrivals: new Map(), loaded: false, updated: 0, error: "" });
+  Object.assign(state, { items: [], infos: [], arrivals: new Map(), past: [], pastState: "idle", loaded: false, updated: 0, error: "" });
   render(); refresh();
 }
 function bindMinutes(id, prop, key) {
@@ -519,6 +562,7 @@ bindMinutes("walk", "walk", "walk");
 bindMinutes("homeWalk", "walk", "walk");
 bindMinutes("zwalk", "zwalk", "zwalk");
 ["walk", "homeWalk"].forEach(id => $(id).addEventListener("change", () => { $("walk").value = $("homeWalk").value = state.walk; }));
+$("pastBtn").onclick = () => { state.showPast = !state.showPast; state.pastState = "idle"; state.past = []; render(); if (state.showPast) refresh(); };
 $("refresh").onclick = refresh;
 $("gear").onclick = () => { state.demo = false; showSetup(); };
 $("keyForm").onsubmit = e => {
