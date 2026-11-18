@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#11130f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bus 336">
+<title>Bus 336</title>
+<style>
+  :root {
+    --bg: #11130f; --panel: #1b1e18; --line: #30352b;
+    --text: #f3f1e7; --muted: #a5a897;
+    --amber: #ffb627; --green: #6fdc8c; --red: #ff7b6b;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; min-height: 100dvh; background: var(--bg); color: var(--text);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 24px);
+  }
+  main { max-width: 460px; margin: 0 auto; }
+  header { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .line {
+    font-weight: 800; font-size: 20px; color: #17130a; background: var(--amber);
+    padding: 3px 10px; border-radius: 6px; font-variant-numeric: tabular-nums;
+  }
+  .route { flex: 1; min-width: 0; color: var(--muted); font-size: 14px; }
+  button, select, input { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .icon {
+    width: 44px; height: 44px; border-radius: 10px; font-size: 20px;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  select, input {
+    width: 100%; min-height: 48px; padding: 10px 12px; border-radius: 10px;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  .dirs {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 12px 0 18px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+  }
+  .dirs button {
+    min-height: 42px; border: 0; border-radius: 8px; background: none;
+    color: var(--muted); font-size: 14px; font-weight: 600;
+  }
+  .dirs button[aria-pressed="true"] { background: var(--amber); color: #17130a; }
+  .dirs button:disabled { opacity: .35; cursor: default; }
+  .hero { padding: 22px 4px 20px; border-top: 1px solid var(--line); }
+  .eyebrow { font-size: 13px; color: var(--muted); }
+  .count {
+    font-size: 84px; line-height: 1.05; font-weight: 800; color: var(--amber);
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  .count small { font-size: 26px; font-weight: 700; letter-spacing: 0; margin-left: 6px; }
+  .count.word { font-size: 52px; padding: 12px 0 6px; }
+  .count.off { color: var(--red); }
+  .meta { font-size: 15px; }
+  .status { margin-top: 8px; font-weight: 600; font-size: 15px; }
+  .ok { color: var(--green); } .late { color: var(--amber); }
+  .bad { color: var(--red); } .none { color: var(--muted); font-weight: 400; }
+  h2 { font-size: 13px; font-weight: 500; color: var(--muted); margin: 8px 0 2px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: grid; grid-template-columns: 62px 1fr auto; gap: 10px; align-items: baseline;
+    padding: 12px 4px; border-top: 1px solid var(--line);
+  }
+  .mins { font-weight: 700; color: var(--amber); font-variant-numeric: tabular-nums; }
+  .time { font-variant-numeric: tabular-nums; }
+  .time s { color: var(--muted); margin-left: 6px; font-size: 13px; }
+  li .status { margin: 0; font-size: 13px; text-align: right; }
+  .note {
+    margin: 14px 0; padding: 12px; font-size: 14px; border-radius: 10px;
+    background: var(--panel); border: 1px solid var(--line);
+  }
+  .note.err { border-color: var(--red); }
+  footer {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line);
+    font-size: 13px; color: var(--muted);
+  }
+  .link { background: none; border: 0; padding: 8px 0; color: var(--amber); font-size: 14px; }
+  a { color: var(--amber); }
+  .setup h1 { font-size: 24px; line-height: 1.2; margin: 0 0 8px; }
+  .setup ol { padding-left: 20px; margin: 12px 0 18px; }
+  .setup li { display: list-item; border: 0; padding: 3px 0; }
+  .primary {
+    width: 100%; min-height: 48px; margin-top: 10px; border: 0; border-radius: 10px;
+    background: var(--amber); color: #17130a; font-weight: 700;
+  }
+  .ghost {
+    width: 100%; min-height: 48px; margin-top: 8px; border-radius: 10px;
+    background: none; border: 1px solid var(--line);
+  }
+  .demo { color: #17130a; background: var(--amber); font-size: 13px; font-weight: 600;
+    padding: 6px 10px; border-radius: 8px; margin-bottom: 14px; }
+  [hidden] { display: none !important; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <span class="line">336</span>
+    <span class="route">Zličín – Hostivice – Jeneč</span>
+    <button class="icon" id="refresh" aria-label="Obnovit" hidden>↻</button>
+    <button class="icon" id="gear" aria-label="Nastavení API klíče" hidden>⚙</button>
+  </header>
+
+  <section class="setup" id="setup" hidden>
+    <h1>Připojení k datům PID</h1>
+    <p>Živá data poskytuje Golemio. Potřebuješ jednorázově bezplatný klíč:</p>
+    <ol>
+      <li>Zaregistruj se na <a href="https://api.golemio.cz/api-keys" target="_blank" rel="noopener">api.golemio.cz/api-keys</a>.</li>
+      <li>Potvrď e-mail a vygeneruj klíč.</li>
+      <li>Vlož ho sem. Zůstane jen v tomhle prohlížeči.</li>
+    </ol>
+    <form id="keyForm">
+      <label for="key">API klíč</label>
+      <input id="key" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      <button class="primary">Uložit a zobrazit odjezdy</button>
+    </form>
+    <button class="ghost" id="demoBtn">Prohlédnout s ukázkovými daty</button>
+    <button class="ghost" id="forget" hidden>Smazat uložený klíč</button>
+  </section>
+
+  <section id="app" hidden>
+    <div class="demo" id="demoBar" hidden>Ukázková data, nejde o skutečné odjezdy</div>
+    <label for="stop">Moje zastávka</label>
+    <select id="stop"></select>
+    <div class="dirs" role="group" aria-label="Směr">
+      <button id="dirOut">→ Hostivice, Jeneč</button>
+      <button id="dirBack">→ Zličín</button>
+    </div>
+    <div id="board" aria-live="off"></div>
+    <div id="infos"></div>
+    <footer><span id="updated" role="status"></span><button class="link" id="exitDemo" hidden>Ukončit ukázku</button></footer>
+  </section>
+</main>
+
+<script>
+"use strict";
+const API = "https://api.golemio.cz/v2/pid/departureboards";
+const LINE = "336", REFRESH_MS = 30000, BACKOFF_MS = 90000, PAGE = 100, MAX_PAGES = 4, WINDOW_MIN = 180;
+
+// Pořadí podle trasy. Více názvů = varianty zápisu, které se postupně vyzkouší.
+const STOPS = [
+  { label: "Zličín", names: ["Zličín"], only: "out" },
+  { label: "Depo Zličín", names: ["Depo Zličín"] },
+  { label: "Chrášťany, Scania-Label", names: ["Chrášťany,Scania-Label"] },
+  { label: "Chýně, Žitná", names: ["Chýně,Žitná"] },
+  { label: "Chýně, Pod Horou", names: ["Chýně,Pod Horou"] },
+  { label: "Chýně, V Roklích", names: ["Chýně,V Roklích"] },
+  { label: "Chýně, Městský úřad", names: ["Chýně,Městský úřad"] },
+  { label: "Hostivice, Břve", names: ["Hostivice,Břve"] },
+  { label: "Hostivice, Břve, Sportovní hala", names: ["Hostivice,Břve,sportovní hala", "Hostivice,Břve,Sportovní hala"] },
+  { label: "Sobín", names: ["Sobín"] },
+  { label: "Hostivice, Na Pískách", names: ["Hostivice,Na Pískách"] },
+  { label: "Hostivice, centrum", names: ["Hostivice,centrum", "Hostivice,Centrum"] },
+  { label: "Hostivice, Stadion", names: ["Hostivice,Stadion", "Hostivice,stadion"] },
+  { label: "Hostivice, Litovice", names: ["Hostivice,Litovice"] },
+  { label: "Hostivice, Staré Litovice", names: ["Hostivice,Staré Litovice"] },
+  { label: "Hostivice, Ve Vilkách", names: ["Hostivice,Ve Vilkách"] },
+  { label: "Jeneč, Lidická", names: ["Jeneč,Lidická"] },
+  { label: "Jeneč", names: ["Jeneč"], only: "back" }
+];
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem("bus336." + k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem("bus336." + k, v); } catch {} },
+  del(k) { try { localStorage.removeItem("bus336." + k); } catch {} }
+};
+const clock = new Intl.DateTimeFormat("cs-CZ", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Prague" });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const savedStop = Number(store.get("stop"));
+const state = {
+  key: store.get("key") || "",            // v paměti funguje klíč i bez localStorage
+  stop: Number.isInteger(savedStop) && STOPS[savedStop] ? savedStop : 0,
+  dir: store.get("dir") === "back" ? "back" : "out",
+  demo: false, items: [], infos: [], updated: 0, loaded: false, error: "", resolved: {}
+};
+let timer = 0, requestId = 0;
+
+/* ---------- data ---------- */
+class HttpError extends Error { constructor(status) { super("HTTP " + status); this.status = status; } }
+
+async function getPage(name, offset) {
+  const q = new URLSearchParams({ minutesAfter: WINDOW_MIN, limit: PAGE, offset, mode: "departures", order: "real" });
+  const res = await fetch(`${API}?names[]=${encodeURIComponent(name)}&${q}`, {
+    headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
+  });
+  if (!res.ok) throw new HttpError(res.status);
+  return res.json();
+}
+
+// Velké uzly (Zličín) mají přes 100 odjezdů, proto se případně čte další stránka.
+async function loadName(name) {
+  const items = [], infos = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await getPage(name, page * PAGE);
+    const deps = data.departures || [];
+    items.push(...deps.filter(d => d.route?.short_name === LINE));
+    infos.push(...(data.infotexts || []));
+    if (deps.length < PAGE || items.length >= 8) break;
+  }
+  return { items, infos };
+}
+
+async function loadStop(index) {
+  const stop = STOPS[index];
+  const names = state.resolved[index] ? [state.resolved[index]] : stop.names;
+  let lastError;
+  for (const name of names) {
+    try {
+      const out = await loadName(name);
+      state.resolved[index] = name;
+      return out;
+    } catch (e) {
+      lastError = e;
+      if (!(e instanceof HttpError) || ![400, 404].includes(e.status)) throw e;
+    }
+  }
+  throw lastError;
+}
+
+function demoData() {
+  const now = Date.now(), make = (min, delay, dir, extra = {}) => {
+    const sched = new Date(now + (min - delay) * 60000).toISOString();
+    return {
+      route: { short_name: LINE },
+      trip: { id: "demo" + min + dir, headsign: dir === "out" ? "Jeneč,Lidická" : "Zličín", ...extra },
+      departure_timestamp: { scheduled: sched, predicted: new Date(now + min * 60000).toISOString() },
+      delay: { is_available: extra.noLive ? false : true, minutes: delay }
+    };
+  };
+  return { infos: [], items: [
+    make(4, 2, "out"), make(24, 0, "out"), make(44, 0, "out", { noLive: true }),
+    make(7, 0, "back"), make(27, 5, "back"), make(47, 0, "back", { is_canceled: true })
+  ]};
+}
+
+async function refresh() {
+  clearTimeout(timer);
+  const id = ++requestId, index = state.stop;
+  let wait = REFRESH_MS;
+  try {
+    const { items, infos } = state.demo ? demoData() : await loadStop(index);
+    if (id !== requestId) return;
+    Object.assign(state, { items, infos, updated: Date.now(), loaded: true, error: "" });
+  } catch (e) {
+    if (id !== requestId) return;
+    const s = e.status;
+    if (s === 401 || s === 403) {
+      state.error = "";
+      showSetup("Klíč nebyl přijat. Zkontroluj ho a vlož znovu.");
+      return;
+    }
+    if (s === 429) wait = BACKOFF_MS;
+    state.error = s === 429 ? "Příliš mnoho dotazů, zkusím to za chvíli znovu."
+      : s === 404 || s === 400 ? "Tuhle zastávku se v datech PID nepodařilo najít."
+      : s ? `Server PID odpověděl chybou ${s}.`
+      : "Nepodařilo se spojit se serverem. Zkontroluj připojení.";
+    state.loaded = true;
+  }
+  render();
+  if (!document.hidden) timer = setTimeout(refresh, wait);
+}
+
+/* ---------- zobrazení ---------- */
+const dirOf = d => /zli[cč][ií]n/i.test(d.trip?.headsign || "") ? "back" : "out";
+const whenOf = d => new Date(d.departure_timestamp?.predicted || d.departure_timestamp?.scheduled).getTime();
+const schedOf = d => new Date(d.departure_timestamp?.scheduled || d.departure_timestamp?.predicted).getTime();
+const niceStop = s => String(s || "").replace(/,(?=\S)/g, ", ");
+
+function effectiveDir() { return STOPS[state.stop].only || state.dir; }
+
+function statusOf(d) {
+  if (d.trip?.is_canceled) return ["bad", "Spoj nejede"];
+  if (d.trip?.is_at_stop) return ["ok", "Stojí v zastávce"];
+  if (!d.delay?.is_available) return ["none", "Bez polohy, podle jízdního řádu"];
+  const m = d.delay.minutes ?? 0;
+  if (m > 0) return [m >= 5 ? "bad" : "late", `Zpoždění ${m} min`];
+  if (m < 0) return ["late", `Napřed ${-m} min`];
+  return ["ok", "Jede včas"];
+}
+
+function countdown(ms) {
+  if (ms < 60000) return null;
+  return Math.round(ms / 60000);
+}
+
+function timeHtml(d) {
+  const real = whenOf(d), plan = schedOf(d), moved = Math.abs(real - plan) >= 60000;
+  return `${clock.format(real)}${moved ? `<s>${clock.format(plan)}</s>` : ""}`;
+}
+
+function render() {
+  const now = Date.now(), dir = effectiveDir();
+  $("dirOut").setAttribute("aria-pressed", dir === "out");
+  $("dirBack").setAttribute("aria-pressed", dir === "back");
+  $("dirOut").disabled = STOPS[state.stop].only === "back";
+  $("dirBack").disabled = STOPS[state.stop].only === "out";
+  $("demoBar").hidden = $("exitDemo").hidden = !state.demo;
+
+  const list = state.items
+    .filter(d => dirOf(d) === dir && whenOf(d) > now - 45000)
+    .sort((a, b) => whenOf(a) - whenOf(b));
+  const next = list.find(d => !d.trip?.is_canceled);
+  let html = state.error ? `<div class="note err">${esc(state.error)}</div>` : "";
+
+  if (!state.loaded) {
+    html += `<div class="hero"><div class="eyebrow">Načítám odjezdy…</div></div>`;
+  } else if (!next && !(state.error && !state.updated)) {
+    html += `<div class="hero"><div class="eyebrow">Další autobus</div>
+      <div class="count word off">Nic</div>
+      <div class="meta">V příštích 3 hodinách tímto směrem nic nejede.</div></div>`;
+  } else if (next) {
+    const ms = whenOf(next) - now, min = countdown(ms), [cls, txt] = statusOf(next);
+    const atStop = next.trip?.is_at_stop;
+    html += `<div class="hero"><div class="eyebrow">Další autobus</div>
+      ${atStop || min === null
+        ? `<div class="count word">${atStop ? "Je tady" : "Přijíždí"}</div>`
+        : `<div class="count">${min}<small>min</small></div>`}
+      <div class="meta">${timeHtml(next)} · směr ${esc(niceStop(next.trip?.headsign))}</div>
+      <div class="status ${cls}">${esc(txt)}</div></div>`;
+  }
+
+  const rest = list.filter(d => d !== next).slice(0, 5);
+  if (rest.length) {
+    html += `<h2>Další spoje</h2><ul>` + rest.map(d => {
+      const [cls, txt] = statusOf(d), min = countdown(whenOf(d) - now);
+      return `<li><span class="mins">${d.trip?.is_canceled ? "—" : min === null ? "teď" : min + " min"}</span>
+        <span class="time">${timeHtml(d)}</span><span class="status ${cls}">${esc(txt)}</span></li>`;
+    }).join("") + `</ul>`;
+  }
+  $("board").innerHTML = html;
+
+  const seen = new Set();
+  $("infos").innerHTML = state.infos
+    .map(i => i?.text).filter(t => t && /\b336\b/.test(t) && !seen.has(t) && seen.add(t))
+    .map(t => `<div class="note">${esc(t)}</div>`).join("");
+  tickFooter();
+}
+
+function tickFooter() {
+  if (!state.updated) { $("updated").textContent = ""; return; }
+  const s = Math.max(0, Math.round((Date.now() - state.updated) / 1000));
+  $("updated").textContent = s < 5 ? "Aktualizováno právě teď" : s < 60 ? `Aktualizováno před ${s} s`
+    : `Aktualizováno v ${clock.format(state.updated)}`;
+}
+
+/* ---------- ovládání ---------- */
+function showSetup(message) {
+  clearTimeout(timer); requestId++;
+  $("app").hidden = true; $("setup").hidden = false;
+  $("refresh").hidden = $("gear").hidden = true;
+  $("key").value = state.key;
+  $("forget").hidden = !state.key;
+  const intro = $("setup").querySelector("p");
+  intro.textContent = message || "Živá data poskytuje Golemio. Potřebuješ jednorázově bezplatný klíč:";
+  intro.className = message ? "bad" : "";
+}
+function showApp() {
+  $("setup").hidden = true; $("app").hidden = false;
+  $("refresh").hidden = $("gear").hidden = false;
+  resetBoard();
+}
+function resetBoard() {
+  Object.assign(state, { items: [], infos: [], loaded: false, updated: 0, error: "" });
+  render(); refresh();
+}
+
+STOPS.forEach((s, i) => $("stop").add(new Option(s.label, i)));
+$("stop").value = state.stop;
+$("stop").onchange = e => { state.stop = +e.target.value; store.set("stop", state.stop); resetBoard(); };
+const setDir = d => { state.dir = d; store.set("dir", d); render(); };
+$("dirOut").onclick = () => setDir("out");
+$("dirBack").onclick = () => setDir("back");
+$("refresh").onclick = refresh;
+$("gear").onclick = () => { state.demo = false; showSetup(); };
+$("keyForm").onsubmit = e => {
+  e.preventDefault();
+  state.key = $("key").value.trim(); state.demo = false; state.resolved = {};
+  store.set("key", state.key); showApp();
+};
+$("demoBtn").onclick = () => { state.demo = true; showApp(); };
+$("exitDemo").onclick = () => { state.demo = false; state.key ? showApp() : showSetup(); };
+$("forget").onclick = () => { state.key = ""; store.del("key"); showSetup(); };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) clearTimeout(timer);
+  else if (!$("app").hidden) refresh();
+});
+setInterval(() => { if (!$("app").hidden && !document.hidden) { state.items.length ? render() : tickFooter(); } }, 1000);
+
+state.key ? showApp() : showSetup();
+</script>
+</body>
+</html>
