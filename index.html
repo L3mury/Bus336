@@ -203,7 +203,7 @@
 "use strict";
 const API = "https://api.golemio.cz/v2/pid/departureboards";
 const LINES = new Set(["336", "347", "358"]);
-const REFRESH_MS = 30000, BACKOFF_MS = 90000, PAGE = 100, MAX_PAGES = 5, WINDOW_MIN = 180, DELAY_MIN = 45;
+const REFRESH_MS = 30000, BACKOFF_MS = 90000, PAGE = 100, MAX_PAGES = 5, WINDOW_MIN = 180;
 
 // Pořadí od Zličína. Více názvů = varianty zápisu, které se postupně vyzkouší.
 const STOPS = [
@@ -266,7 +266,7 @@ const state = {
   showMap: false, mapState: "idle", positions: new Map(), mapBuses: [], stopPoint: null, fitMap: true,
   updated: 0, loaded: false, error: "", resolved: {}
 };
-let timer = 0, requestId = 0;
+let timer = 0, requestId = 0, lookBack = 30;   // kolik minut zpět hledat opožděné spoje
 
 const activeStop = () => state.mode === "work" ? ROKLICE : state.mode === "home" ? ZLICIN : state.stop;
 const activeDir = () => state.mode === "work" ? "back" : state.mode === "home" ? "out" : STOPS[state.stop].only || state.dir;
@@ -288,11 +288,13 @@ class HttpError extends Error { constructor(status) { super("HTTP " + status); t
 async function getPage(name, offset, minutes, from) {
   const q = new URLSearchParams({ minutesAfter: minutes, limit: PAGE, offset, mode: "departures", order: "real" });
   // Okno se řídí plánovaným časem, proto sahá i do minulosti: jinak by zmizely opožděné spoje.
-  q.set("minutesBefore", from ? 0 : DELAY_MIN);
+  q.set("minutesBefore", from ? 0 : lookBack);
   if (from) q.set("timeFrom", from);
   const res = await fetch(`${API}?names[]=${encodeURIComponent(name)}&${q}`, {
     headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
   });
+  // Kdyby server tenhle rozsah odmítl, aplikace musí fungovat dál i bez něj.
+  if (res.status === 400 && !from && lookBack) { lookBack = 0; return getPage(name, offset, minutes); }
   if (!res.ok) throw new HttpError(res.status);
   return res.json();
 }
@@ -396,7 +398,8 @@ async function refresh() {
     if (s === 401 || s === 403) { state.error = ""; showSetup("Klíč nebyl přijat. Zkontroluj ho a vlož znovu."); return; }
     if (s === 429) wait = BACKOFF_MS;
     state.error = s === 429 ? "Příliš mnoho dotazů, zkusím to za chvíli znovu."
-      : s === 404 || s === 400 ? "Tuhle zastávku se v datech PID nepodařilo najít."
+      : s === 404 ? "Tuhle zastávku se v datech PID nepodařilo najít."
+      : s === 400 ? "Server PID dotaz odmítl. Zkusím to znovu."
       : s ? `Server PID odpověděl chybou ${s}.`
       : "Nepodařilo se spojit se serverem. Zkontroluj připojení.";
     state.loaded = true;
@@ -606,7 +609,9 @@ function render() {
   $("dirOut").disabled = STOPS[state.stop].only === "back";
   $("dirBack").disabled = STOPS[state.stop].only === "out";
   $("demoBar").hidden = $("exitDemo").hidden = !state.demo;
-  if (mode !== "other") $("plan").innerHTML = state.loaded ? (mode === "work" ? planWork(now) : planHome(now)) : `<div class="hint">Načítám…</div>`;
+  if (mode !== "other") $("plan").innerHTML = !state.loaded ? `<div class="hint">Načítám…</div>`
+    : state.error && !state.items.length ? `<div class="hint">Spoje se teď nepodařilo načíst.</div>`
+    : mode === "work" ? planWork(now) : planHome(now);
 
   const list = state.items.filter(d => dirOf(d) === dir && upcoming(d, now)).sort((a, b) => whenOf(a) - whenOf(b));
   const next = list.find(d => !d.trip?.is_canceled);
