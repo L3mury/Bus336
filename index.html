@@ -113,6 +113,19 @@
   .arr { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
   .plan b { color: var(--amber); }
   .mins.was { color: var(--muted); }
+  #mapBtn { margin: 0 0 14px; }
+  #mapBox { margin-bottom: 14px; }
+  #map { height: 300px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); isolation: isolate; overflow: hidden; }
+  #mapList .hint { margin-top: 10px; color: var(--muted); font-size: 14px; }
+  #mapList li .status { font-size: 13px; }
+  .leaflet-container { font: 13px/1.4 system-ui, -apple-system, sans-serif; }
+  .leaflet-container a { color: #0b63c5; }
+  .pin { display: block; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 5px solid #17130a; box-shadow: 0 0 0 2px #fff; }
+  .bus { position: relative; display: flex; align-items: center; justify-content: center; width: 44px; height: 26px; border-radius: 7px;
+    background: #2b2f27; color: #fff; font-weight: 800; font-size: 13px; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); box-sizing: border-box; }
+  .bus.mine { background: var(--amber); color: #17130a; }
+  .bus i { position: absolute; left: 50%; top: 50%; width: 60px; height: 60px; margin: -30px 0 0 -30px; pointer-events: none; }
+  .bus i::before { content: ""; position: absolute; top: 0; left: 50%; margin-left: -5px; border: 5px solid transparent; border-top: 0; border-bottom: 7px solid #17130a; }
   #past { margin-top: 12px; }
   #past .hint { color: var(--muted); font-size: 14px; padding: 4px; }
   .fields > div { display: flex; flex-direction: column; justify-content: flex-end; }
@@ -173,6 +186,11 @@
       </div>
       <div class="plan" id="plan"></div>
     </section>
+    <button class="ghost" id="mapBtn" aria-controls="mapBox"></button>
+    <div id="mapBox" hidden>
+      <div id="map" role="img" aria-label="Mapa s polohou autobusů"></div>
+      <div id="mapList"></div>
+    </div>
     <div id="board" aria-live="off"></div>
     <button class="ghost" id="pastBtn" aria-controls="past"></button>
     <div id="past" hidden></div>
@@ -213,7 +231,11 @@ const STOPS = [
   { label: "Jeneč, Lidická", names: ["Jeneč,Lidická"] },
   { label: "Jeneč", names: ["Jeneč"], only: "back" }
 ];
+const POSITION_API = "https://api.golemio.cz/v2/vehiclepositions/", MAP_BUSES = 4, STALE_MS = 5 * 60000;
+const LEAFLET = "https://unpkg.com/leaflet@1.9.4/dist/";
 const ZLICIN = 0, ROKLICE = STOPS.findIndex(s => s.label === "Chýně, V Roklích");
+
+const FALLBACK_POINTS = { 0: [50.0537, 14.2906], 5: [50.05494, 14.2288] };
 
 const $ = id => document.getElementById(id);
 const store = {
@@ -241,6 +263,7 @@ const state = {
   zwalk: minutesSetting("zwalk", 12),
   demo: false, items: [], infos: [], arrivals: new Map(),
   showPast: false, past: [], pastState: "idle",
+  showMap: false, mapState: "idle", positions: new Map(), mapBuses: [], stopPoint: null, fitMap: true,
   updated: 0, loaded: false, error: "", resolved: {}
 };
 let timer = 0, requestId = 0;
@@ -281,15 +304,22 @@ function wanted(d, index) {
 
 // Velké uzly (Zličín) mají přes 100 odjezdů, proto se případně čte další stránka.
 async function loadName(name, index, minutes, from) {
-  const items = [], infos = [];
+  const items = [], infos = [], stops = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await getPage(name, page * PAGE, minutes, from);
     const deps = data.departures || [];
     items.push(...deps.filter(d => wanted(d, index)));
     infos.push(...(data.infotexts || []));
+    if (!page) stops.push(...(data.stops || []));
     if (deps.length < PAGE || (!from && items.length >= 10)) break;
   }
-  return { items, infos };
+  return { items, infos, stops };
+}
+
+function stopPoint(stops, index) {
+  const pts = (stops || []).map(s => [Number(s.stop_lat), Number(s.stop_lon)]).filter(([a, b]) => a && b);
+  if (!pts.length) return FALLBACK_POINTS[index] || null;
+  return [pts.reduce((t, p) => t + p[0], 0) / pts.length, pts.reduce((t, p) => t + p[1], 0) / pts.length];
 }
 
 async function loadStop(index, minutes, from) {
@@ -341,7 +371,7 @@ async function refresh() {
   const id = ++requestId, index = activeStop(), mode = state.mode;
   let wait = REFRESH_MS;
   try {
-    const { items, infos } = await load(index, windowMinutes());
+    const { items, infos, stops } = await load(index, windowMinutes());
     let arrivals = state.arrivals;
     if (mode === "home") {
       // Stejný spoj hledáme i na V Roklích, odtud je čas příjezdu domů.
@@ -357,7 +387,7 @@ async function refresh() {
       catch (e) { if (e.status === 401 || e.status === 403) throw e; pastState = "error"; }
     }
     if (id !== requestId) return;
-    Object.assign(state, { items, infos, arrivals, past, pastState, updated: Date.now(), loaded: true, error: "" });
+    Object.assign(state, { items, infos, arrivals, past, pastState, stopPoint: stopPoint(stops, index), updated: Date.now(), loaded: true, error: "" });
   } catch (e) {
     if (id !== requestId) return;
     const s = e.status;
@@ -370,7 +400,118 @@ async function refresh() {
     state.loaded = true;
   }
   render();
+  if (state.showMap) updateMap(id);
   if (!document.hidden) timer = setTimeout(refresh, wait);
+}
+
+/* ---------- mapa ---------- */
+let leafletReady = null, map = null, mapLayer = null;
+
+function ensureLeaflet() {
+  if (window.L) return Promise.resolve();
+  if (leafletReady) return leafletReady;
+  leafletReady = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    Object.assign(css, { rel: "stylesheet", href: LEAFLET + "leaflet.css", integrity: "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=", crossOrigin: "" });
+    const js = document.createElement("script");
+    Object.assign(js, { src: LEAFLET + "leaflet.js", integrity: "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=", crossOrigin: "", onload: resolve, onerror: reject });
+    document.head.append(css, js);
+  }).catch(e => { leafletReady = null; throw e; });
+  return leafletReady;
+}
+
+function parsePosition(json) {
+  const f = json?.features?.[0] || json, c = f?.geometry?.coordinates, p = f?.properties?.last_position || {};
+  const lon = Number(c?.[0]), lat = Number(c?.[1]);
+  if (!(lat > 48 && lat < 52 && lon > 12 && lon < 19)) return null;
+  return { lat, lon, bearing: Number(p.bearing), at: Date.parse(p.origin_timestamp), tracking: p.tracking, state: p.state_position };
+}
+
+async function getPosition(id) {
+  if (state.demo) {
+    const i = [...id].reduce((t, c) => t + c.charCodeAt(0), 0) % 4, base = state.stopPoint || FALLBACK_POINTS[ROKLICE];
+    return { lat: base[0] + .002 * (i - 1.5), lon: base[1] + .006 * (i - 1.5), bearing: 90 * i, at: Date.now() - 12000, tracking: true };
+  }
+  const res = await fetch(`${POSITION_API}${encodeURIComponent(id)}?includeNotTracking=true`, {
+    headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new HttpError(res.status);
+  return parsePosition(await res.json());
+}
+
+function mapBuses(now) {
+  const dir = activeDir(), mine = chosenBus(now);
+  const list = running(dir).filter(d => d.trip?.id && whenOf(d) > now - 45000).slice(0, MAP_BUSES);
+  if (mine?.trip?.id && !list.includes(mine)) list[Math.min(list.length, MAP_BUSES - 1)] = mine;
+  return list;
+}
+
+async function updateMap(id) {
+  try {
+    await ensureLeaflet();
+    const buses = mapBuses(Date.now());
+    const found = await Promise.all(buses.map(d => getPosition(d.trip.id).then(p => [d.trip.id, p], () => [d.trip.id, undefined])));
+    if (id !== requestId || !state.showMap) return;
+    Object.assign(state, { positions: new Map(found), mapBuses: buses, mapState: "ok" });
+    drawMap();
+  } catch {
+    if (id !== requestId) return;
+    state.mapState = "error";
+  }
+  renderMapList(Date.now());
+}
+
+function drawMap() {
+  if (!map) {
+    map = L.map("map", { attributionControl: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
+    map.attributionControl.setPrefix("Leaflet");
+    mapLayer = L.layerGroup().addTo(map);
+  }
+  map.invalidateSize();
+  mapLayer.clearLayers();
+  const points = [], mine = chosenBus(Date.now());
+  if (state.stopPoint) {
+    points.push(state.stopPoint);
+    L.marker(state.stopPoint, { icon: L.divIcon({ className: "", html: `<span class="pin"></span>`, iconSize: [18, 18], iconAnchor: [9, 9] }), title: STOPS[activeStop()].label, zIndexOffset: -100 })
+      .bindPopup(esc(STOPS[activeStop()].label)).addTo(mapLayer);
+  }
+  state.mapBuses.forEach(d => {
+    const p = state.positions.get(d.trip.id);
+    if (!p) return;
+    points.push([p.lat, p.lon]);
+    const arrow = Number.isFinite(p.bearing) ? `<i style="transform:rotate(${p.bearing}deg)"></i>` : "";
+    const cls = d === mine ? "bus mine" : "bus";
+    L.marker([p.lat, p.lon], { icon: L.divIcon({ className: "", html: `<span class="${cls}">${arrow}${esc(d.route?.short_name)}</span>`, iconSize: [44, 26], iconAnchor: [22, 13] }), zIndexOffset: d === mine ? 500 : 0 })
+      .bindPopup(`Linka ${esc(d.route?.short_name)} · odjezd ${clock.format(whenOf(d))}<br>${esc(statusOf(d)[1])}`).addTo(mapLayer);
+  });
+  if (state.fitMap && points.length) {
+    if (points.length === 1) map.setView(points[0], 15);
+    else map.fitBounds(points, { padding: [36, 36], maxZoom: 16 });
+    state.fitMap = false;
+  } else if (!map._loaded) map.setView(FALLBACK_POINTS[ROKLICE], 14);
+}
+
+function positionText(p, now) {
+  if (p === undefined) return "Polohu se nepodařilo načíst";
+  if (!p) return "Poloha zatím není k dispozici";
+  const age = Number.isNaN(p.at) ? null : Math.max(0, Math.round((now - p.at) / 1000));
+  if (age !== null && age * 1000 > STALE_MS) return `Poslední poloha před ${Math.round(age / 60)} min`;
+  const when = age === null ? "" : age < 60 ? `, před ${age} s` : `, před ${Math.round(age / 60)} min`;
+  return (p.tracking === false || p.state === "before_track" ? "Ještě nevyjel na trasu" : "Na mapě") + when;
+}
+
+function renderMapList(now) {
+  $("mapBtn").setAttribute("aria-expanded", state.showMap);
+  $("mapBtn").textContent = state.showMap ? "Skrýt mapu" : "Ukázat autobusy na mapě";
+  $("mapBox").hidden = !state.showMap;
+  if (!state.showMap) return;
+  if (state.mapState === "error") { $("mapList").innerHTML = `<div class="hint">Mapu se nepodařilo načíst. Zkus obnovit stránku.</div>`; return; }
+  if (state.mapState === "idle") { $("mapList").innerHTML = `<div class="hint">Načítám polohu…</div>`; return; }
+  if (!state.mapBuses.length) { $("mapList").innerHTML = `<div class="hint">Tímto směrem teď v datech žádný autobus nejede.</div>`; return; }
+  $("mapList").innerHTML = `<ul>` + state.mapBuses.map(d => `<li><span class="mins">${clock.format(whenOf(d))}</span>
+    <span class="time">${tag(d)}</span><span class="status none">${esc(positionText(state.positions.get(d.trip.id), now))}</span></li>`).join("") + `</ul>`;
 }
 
 /* ---------- zobrazení ---------- */
@@ -402,13 +543,25 @@ function timeHtml(d) {
 }
 const running = dir => state.items.filter(d => dirOf(d) === dir && !d.trip?.is_canceled).sort((a, b) => whenOf(a) - whenOf(b));
 
+function pickWork(now, arrive) { return running("back").find(d => whenOf(d) >= arrive && whenOf(d) > now - 45000); }
+function pickHome(now) {
+  const options = running("out").filter(d => whenOf(d) >= now + state.zwalk * 60000);
+  return options.find(d => state.arrivals.has(d.trip?.id)) || options[0];
+}
+function chosenBus(now) {
+  if (state.mode === "home") return pickHome(now);
+  if (state.mode !== "work") return null;
+  const arrive = leaveAt(now) + state.walk * 60000;
+  return now > arrive + 30 * 60000 ? null : pickWork(now, arrive);
+}
+
 function planWork(now) {
   const leave = leaveAt(now), arrive = leave + state.walk * 60000;
   const leaveText = clock.format(leave), arriveText = clock.format(arrive);
   if (now > arrive + 30 * 60000) return `<div class="sub">Dnešní odchod je za tebou.</div>
     <div class="hint">Zítra odcházíš v ${leaveText}. Čas autobusu se tu ukáže ráno.</div>`;
   const usable = running("back");
-  const bus = usable.find(d => whenOf(d) >= arrive && whenOf(d) > now - 45000);
+  const bus = pickWork(now, arrive);
   if (!bus) {
     const liveFrom = arrive - 300 * 60000;
     return now < liveFrom
@@ -426,9 +579,7 @@ function planWork(now) {
 }
 
 function planHome(now) {
-  const ready = now + state.zwalk * 60000;
-  const options = running("out").filter(d => whenOf(d) >= ready);
-  const bus = options.find(d => state.arrivals.has(d.trip?.id)) || options[0];
+  const bus = pickHome(now);
   if (!bus) return `<div class="sub">Teď v datech žádný spoj do Chýně nestihneš.</div>`;
   const [cls, txt] = statusOf(bus), there = state.arrivals.get(bus.trip?.id);
   return `<div class="eyebrow">Stihneš autobus ze Zličína</div>
@@ -480,6 +631,7 @@ function render() {
   }
   $("board").innerHTML = html;
   renderPast(now, dir);
+  renderMapList(now);
 
   const seen = new Set();
   $("infos").innerHTML = state.infos.map(i => i?.text)
@@ -534,7 +686,7 @@ function showApp() {
   resetBoard();
 }
 function resetBoard() {
-  Object.assign(state, { items: [], infos: [], arrivals: new Map(), past: [], pastState: "idle", loaded: false, updated: 0, error: "" });
+  Object.assign(state, { items: [], infos: [], arrivals: new Map(), past: [], pastState: "idle", positions: new Map(), mapBuses: [], mapState: "idle", fitMap: true, loaded: false, updated: 0, error: "" });
   render(); refresh();
 }
 function bindMinutes(id, prop, key) {
@@ -563,6 +715,10 @@ bindMinutes("homeWalk", "walk", "walk");
 bindMinutes("zwalk", "zwalk", "zwalk");
 ["walk", "homeWalk"].forEach(id => $(id).addEventListener("change", () => { $("walk").value = $("homeWalk").value = state.walk; }));
 $("pastBtn").onclick = () => { state.showPast = !state.showPast; state.pastState = "idle"; state.past = []; render(); if (state.showPast) refresh(); };
+$("mapBtn").onclick = () => {
+  state.showMap = !state.showMap; state.mapState = "idle"; state.fitMap = true;
+  render(); if (state.showMap) refresh();
+};
 $("refresh").onclick = refresh;
 $("gear").onclick = () => { state.demo = false; showSetup(); };
 $("keyForm").onsubmit = e => {
