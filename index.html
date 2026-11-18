@@ -97,6 +97,14 @@
   }
   .demo { color: #17130a; background: var(--amber); font-size: 13px; font-weight: 600;
     padding: 6px 10px; border-radius: 8px; margin-bottom: 14px; }
+  .commute { margin: 0 0 16px; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); }
+  .commute h2 { margin: 0 0 10px; font-size: 14px; font-weight: 700; color: var(--text); }
+  .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .fields input { background: var(--bg); min-width: 0; -webkit-appearance: none; appearance: none; }
+  .plan { margin-top: 14px; }
+  .plan .big { font-size: 40px; line-height: 1.1; font-weight: 800; color: var(--amber); font-variant-numeric: tabular-nums; }
+  .plan .sub { margin-top: 6px; font-size: 15px; }
+  .plan .hint { margin-top: 6px; font-size: 13px; color: var(--muted); }
   [hidden] { display: none !important; }
   :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 </style>
@@ -135,6 +143,14 @@
       <button id="dirOut">→ Hostivice, Jeneč</button>
       <button id="dirBack">→ Zličín</button>
     </div>
+    <section class="commute" id="commute" hidden>
+      <h2>Můj odchod z bytu</h2>
+      <div class="fields">
+        <div><label for="leave">Odcházím v</label><input id="leave" type="time" required></div>
+        <div><label for="walk">Cesta na zastávku (min)</label><input id="walk" type="number" inputmode="numeric" min="0" max="60"></div>
+      </div>
+      <div class="plan" id="plan"></div>
+    </section>
     <div id="board" aria-live="off"></div>
     <div id="infos"></div>
     <footer><span id="updated" role="status"></span><button class="link" id="exitDemo" hidden>Ukončit ukázku</button></footer>
@@ -168,6 +184,8 @@ const STOPS = [
   { label: "Jeneč", names: ["Jeneč"], only: "back" }
 ];
 
+const COMMUTE_STOP = STOPS.findIndex(s => s.label === "Chýně, V Roklích");
+
 const $ = id => document.getElementById(id);
 const store = {
   get(k) { try { return localStorage.getItem("bus336." + k); } catch { return null; } },
@@ -177,20 +195,36 @@ const store = {
 const clock = new Intl.DateTimeFormat("cs-CZ", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Prague" });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+// Při prvním spuštění této verze přepne na ranní cestu.
+if (!store.get("commuteV1")) { store.set("stop", COMMUTE_STOP); store.set("dir", "back"); store.set("commuteV1", "1"); }
 const savedStop = Number(store.get("stop"));
 const state = {
   key: store.get("key") || "",            // v paměti funguje klíč i bez localStorage
   stop: Number.isInteger(savedStop) && STOPS[savedStop] ? savedStop : 0,
   dir: store.get("dir") === "back" ? "back" : "out",
+  leave: /^\d\d:\d\d$/.test(store.get("leave") || "") ? store.get("leave") : "07:36",
+  walk: Math.min(60, Math.max(0, parseInt(store.get("walk"), 10) || 0)) || (store.get("walk") === "0" ? 0 : 7),
   demo: false, items: [], infos: [], updated: 0, loaded: false, error: "", resolved: {}
 };
 let timer = 0, requestId = 0;
+
+/* ---------- čas odchodu ---------- */
+const pragueClock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Europe/Prague" });
+function leaveAt(now = Date.now()) {
+  const [h, m] = pragueClock.format(now).split(":").map(Number), [lh, lm] = state.leave.split(":").map(Number);
+  return now - now % 60000 + ((lh * 60 + lm) - (h * 60 + m)) * 60000;
+}
+function windowMinutes() {
+  if (state.stop !== COMMUTE_STOP) return WINDOW_MIN;
+  const ahead = Math.ceil((leaveAt() - Date.now()) / 60000) + state.walk + 60;
+  return Math.min(360, Math.max(WINDOW_MIN, ahead));
+}
 
 /* ---------- data ---------- */
 class HttpError extends Error { constructor(status) { super("HTTP " + status); this.status = status; } }
 
 async function getPage(name, offset) {
-  const q = new URLSearchParams({ minutesAfter: WINDOW_MIN, limit: PAGE, offset, mode: "departures", order: "real" });
+  const q = new URLSearchParams({ minutesAfter: windowMinutes(), limit: PAGE, offset, mode: "departures", order: "real" });
   const res = await fetch(`${API}?names[]=${encodeURIComponent(name)}&${q}`, {
     headers: { "X-Access-Token": state.key, Accept: "application/json" }, cache: "no-store"
   });
@@ -299,6 +333,44 @@ function timeHtml(d) {
   return `${clock.format(real)}${moved ? `<s>${clock.format(plan)}</s>` : ""}`;
 }
 
+function inMinutes(ms) {
+  const m = Math.ceil(ms / 60000);
+  return m < 60 ? `za ${m} min` : `za ${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+function renderCommute(now, dir) {
+  const show = state.stop === COMMUTE_STOP;
+  $("commute").hidden = !show;
+  if (!show) return;
+  if (!state.loaded) { $("plan").innerHTML = `<div class="hint">Načítám…</div>`; return; }
+  const leave = leaveAt(now), arrive = leave + state.walk * 60000;
+  const leaveText = clock.format(leave), arriveText = clock.format(arrive);
+  if (now > arrive + 30 * 60000) {
+    $("plan").innerHTML = `<div class="sub">Dnešní odchod je za tebou.</div>
+      <div class="hint">Zítra odcházíš v ${leaveText}. Čas autobusu se tu ukáže ráno.</div>`;
+    return;
+  }
+  // Autobus může přijet i dřív než podle jízdního řádu, proto se počítá s dřívějším z obou časů.
+  const usable = state.items.filter(d => dirOf(d) === dir && !d.trip?.is_canceled).sort((a, b) => whenOf(a) - whenOf(b));
+  const safeTime = d => Math.min(whenOf(d), schedOf(d));
+  const bus = usable.find(d => safeTime(d) >= arrive && whenOf(d) > now - 45000);
+  if (!bus) {
+    const liveFrom = arrive - 300 * 60000;
+    $("plan").innerHTML = now < liveFrom
+      ? `<div class="sub">Na zastávce budeš v ${arriveText}.</div><div class="hint">Živý čas autobusu se ukáže zhruba od ${clock.format(liveFrom)}.</div>`
+      : `<div class="sub">Po ${arriveText} teď v datech tímto směrem žádný spoj není.</div>`;
+    return;
+  }
+  const [cls, txt] = statusOf(bus), wait = Math.max(0, Math.floor((whenOf(bus) - arrive) / 60000));
+  const action = now < leave ? `Vyraz ${inMinutes(leave - now)}, v ${leaveText}` : now < arrive ? "Už bys měl být na cestě" : "Měl bys být na zastávce";
+  const earlier = usable.filter(d => d !== bus && whenOf(d) < whenOf(bus) && safeTime(d) - state.walk * 60000 > now).pop();
+  $("plan").innerHTML = `<div class="eyebrow">Tvůj autobus na V Roklích</div>
+    <div class="big">${clock.format(whenOf(bus))}</div>
+    <div class="status ${cls}">${esc(txt)}</div>
+    <div class="sub">${action}. Na zastávce budeš v ${arriveText} a počkáš ${wait} min.</div>
+    ${earlier ? `<div class="hint">Dřívější spoj jede v ${clock.format(whenOf(earlier))}, na ten vyraz nejpozději v ${clock.format(safeTime(earlier) - state.walk * 60000)}.</div>` : ""}`;
+}
+
 function render() {
   const now = Date.now(), dir = effectiveDir();
   $("dirOut").setAttribute("aria-pressed", dir === "out");
@@ -306,6 +378,7 @@ function render() {
   $("dirOut").disabled = STOPS[state.stop].only === "back";
   $("dirBack").disabled = STOPS[state.stop].only === "out";
   $("demoBar").hidden = $("exitDemo").hidden = !state.demo;
+  renderCommute(now, dir);
 
   const list = state.items
     .filter(d => dirOf(d) === dir && whenOf(d) > now - 45000)
@@ -381,6 +454,17 @@ $("stop").onchange = e => { state.stop = +e.target.value; store.set("stop", stat
 const setDir = d => { state.dir = d; store.set("dir", d); render(); };
 $("dirOut").onclick = () => setDir("out");
 $("dirBack").onclick = () => setDir("back");
+$("leave").value = state.leave;
+$("walk").value = state.walk;
+$("leave").onchange = e => {
+  if (!e.target.value) { e.target.value = state.leave; return; }
+  state.leave = e.target.value; store.set("leave", state.leave); refresh();
+};
+$("walk").onchange = e => {
+  const v = parseInt(e.target.value, 10);
+  state.walk = Number.isNaN(v) ? state.walk : Math.min(60, Math.max(0, v));
+  e.target.value = state.walk; store.set("walk", state.walk); refresh();
+};
 $("refresh").onclick = refresh;
 $("gear").onclick = () => { state.demo = false; showSetup(); };
 $("keyForm").onsubmit = e => {
